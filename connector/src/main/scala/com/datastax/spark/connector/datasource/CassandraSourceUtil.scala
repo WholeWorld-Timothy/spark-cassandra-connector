@@ -2,10 +2,13 @@ package com.datastax.spark.connector.datasource
 
 import java.util.Locale
 
-import com.datastax.spark.connector.TableRef
+import com.datastax.oss.driver.api.core.ProtocolVersion
+import com.datastax.oss.driver.api.core.`type`.DataType
+import com.datastax.oss.driver.api.core.`type`.DataTypes
+import com.datastax.oss.driver.api.core.`type`.DataTypes._
 import com.datastax.spark.connector.util.{ConfigParameter, DeprecatedConfigParameter}
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.cassandra.CassandraSourceRelation
+import org.apache.spark.sql.types.{BooleanType => SparkSqlBooleanType, DataType => SparkSqlDataType, DateType => SparkSqlDateType, DecimalType => SparkSqlDecimalType, DoubleType => SparkSqlDoubleType, FloatType => SparkSqlFloatType, MapType => SparkSqlMapType, TimestampType => SparkSqlTimestampType, _}
 
 object CassandraSourceUtil {
 
@@ -38,5 +41,38 @@ object CassandraSourceUtil {
     //Set all user properties
     conf.setAll(tableConf -- AllSCCConfNames)
     conf
+  }
+
+  def sparkSqlToJavaDriverType(
+    dataType: SparkSqlDataType,
+    protocolVersion: ProtocolVersion = ProtocolVersion.DEFAULT): DataType = {
+
+    def unsupportedType() = throw new IllegalArgumentException(s"Unsupported type: $dataType")
+
+    val pvGt4 = (protocolVersion.getCode >= ProtocolVersion.V4.getCode)
+
+    dataType match {
+      case ByteType => if (pvGt4) TINYINT else INT
+      case ShortType => if (pvGt4) SMALLINT else INT
+      case IntegerType => INT
+      case LongType => BIGINT
+      case SparkSqlFloatType => FLOAT
+      case SparkSqlDoubleType => DOUBLE
+      case StringType => TEXT
+      case BinaryType => BLOB
+      case SparkSqlBooleanType => BOOLEAN
+      case SparkSqlTimestampType => TIMESTAMP
+      case SparkSqlDateType => if (pvGt4) DATE else TIMESTAMP
+      case SparkSqlDecimalType() => DECIMAL
+      case ArrayType(sparkSqlElementType, containsNull) =>
+        val argType = sparkSqlToJavaDriverType(sparkSqlElementType)
+        DataTypes.listOf(argType)
+      case SparkSqlMapType(sparkSqlKeyType, sparkSqlValueType, containsNull) =>
+        val keyType = sparkSqlToJavaDriverType(sparkSqlKeyType)
+        val valueType = sparkSqlToJavaDriverType(sparkSqlValueType)
+        DataTypes.mapOf(keyType, valueType)
+      case _ =>
+        unsupportedType()
+    }
   }
 }
